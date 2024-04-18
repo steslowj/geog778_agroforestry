@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no" />
+    <title>Agroforestry Mean Chestnut Suitability | Data Exploration With Slider</title>
+    <!-- based on Slider Widget Sample Code ESRI JS API 4.29 -->
+
+    <link rel="stylesheet" href="https://js.arcgis.com/4.29/esri/themes/light/main.css" />
+    <script src="https://js.arcgis.com/4.29/"></script>
+
+    <style>
+      html,
+      body,
+      #viewDiv {
+        padding: 0;
+        margin: 0;
+        height: 100%;
+        width: 100%;
+      }
+
+      #containerDiv {
+        background-color: white;
+        padding: 3px;
+        text-align: center;
+        min-width: 260px;
+        width: 280px;
+      }
+    </style>
+
+    <script>
+      require([
+        "esri/config",
+        "esri/Map",
+        "esri/views/MapView",
+        "esri/layers/FeatureLayer",
+        "esri/smartMapping/renderers/color",
+        "esri/smartMapping/symbology/color",
+        "esri/smartMapping/statistics/histogram",
+        "esri/widgets/smartMapping/ColorSlider",
+        "esri/Color",
+        "esri/intl",
+      ], (
+        esriConfig, Map, MapView, FeatureLayer, colorRendererCreator, colorSymbology,
+        histogram, ColorSlider, Color, intl
+      ) => 
+      
+      (async () => {
+
+        esriConfig.apiKey = "AAPK9c2d1c71e0c54fea8c41854d79e2bb2aRY4BboQbjkrg1gzIR4byHHAPQAnvnqnY0kwBUXQfbQGvJjGbV3it18SqxWbjCtON";
+
+        // Create a map and add it to a MapView
+
+        const layer = new FeatureLayer({
+          portalItem: {
+            id: "6745bb0fbc3d4ef28e149ff2dce99e28"
+          },
+          definitionExpression: "MEAN_CHEST > 0", // Mean of Chestnut Suitability per County
+          visible: false
+        });
+
+        const layerOutline = new FeatureLayer({
+          portalItem: {
+            id: "6745bb0fbc3d4ef28e149ff2dce99e28"
+          },
+          outFields: [], // no data needed for outline layer,
+          renderer: {
+            type: "simple",
+            symbol: {
+              type: "simple-fill",
+              color: "transparent",
+              style: "solid",
+              outline: {
+                color: [30, 30, 30, 0.2],
+                width: 0.3
+              }
+            }
+          }
+        });
+
+        const map = new Map({
+          basemap: {
+            portalItem: {
+              id: "3582b744bba84668b52a16b0b6942544"
+            }
+          },
+          layers: [ layer, layerOutline ]
+        });
+
+        const view = new MapView({
+          container: "viewDiv",
+          map: map,
+          scale: 2077790,
+          center: [ -90, 44.5 ]
+        });
+
+        view.ui.add("containerDiv", "top-right");
+
+        // configure parameters for the color renderer generator
+        // the layer must be specified along with a field name
+        // or arcade expression. The basemap and other properties determine
+        // the appropriate default color scheme.
+
+        const greenAndBlueScheme = colorSymbology.getSchemeByName({
+          basemap: map.basemap,
+          geometryType: "polygon",
+          theme: "high-to-low",
+          name: "Green 5"
+        });
+
+        const colorParams = {
+          layer: layer,
+          field: "MEAN_CHEST",
+          theme: "high-to-low",
+          colorScheme: greenAndBlueScheme
+        };
+
+        // create reference to histogram bar elements for updating
+        // their style as the user drags slider thumbs
+        const bars = [];
+        let rendererResult = null;
+        let vv = null;
+
+        colorRendererCreator
+          .createContinuousRenderer(colorParams)
+          .then((response) => {
+            // set the renderer to the layer and add it to the map
+            rendererResult = response;
+            vv = rendererResult.visualVariable;
+            layer.renderer = response.renderer;
+            layer.visible = true;
+
+            return histogram({
+              layer: colorParams.layer,
+              field: colorParams.field,
+              numBins: 60
+            });
+          })
+          .then((histogramResult) => {
+            const slider = ColorSlider.fromRendererResult(rendererResult, histogramResult);
+
+            // format slider labels as currency
+
+            slider.set({
+              container: "slider",
+              primaryHandleEnabled: true,
+              handlesSyncedToPrimary: false,
+              visibleElements: {
+                interactiveTrack: true
+              },
+              syncedSegmentsEnabled: true,
+              // labelFormatFunction: (value, type) => {
+              //   return intl.formatNumber(value, {
+              //     style: "currency",
+              //     currency: "USD",
+              //     currencyDisplay: "symbol",
+              //     maximumFractionDigits: 0,
+              //     minimumFractionDigits: 0
+              //   });
+              // }
+            });
+
+
+
+            // update the slider bars to match renderer values
+            slider.histogramConfig.barCreatedFunction = (index, element) => {
+              const bin = histogramResult.bins[index];
+              const midValue = (bin.maxValue - bin.minValue) / 2 + bin.minValue;
+              const color = getColorFromValue(vv.stops, midValue);
+              element.setAttribute("fill", color.toHex());
+              bars.push(element);
+            };
+
+            // // render meaningful data lines on the slider for
+            // // communicating policy issues
+            // slider.histogramConfig.dataLines = [{
+            //   value: 83500,
+            //   label: "HUD low income"
+            // }, {
+            //   value: 25750,
+            //   label: "Fed poverty line"
+            // }]
+
+            // slider values will only go to 2 decimal places
+            slider.viewModel.precision = 2;
+
+            // Update the renderer for each change made to the slider
+
+            slider.on(["thumb-change", "thumb-drag", "min-change", "max-change", "segment-drag"], () => {
+              const renderer = layer.renderer.clone();
+              const colorVariable = renderer.visualVariables[0].clone();
+              colorVariable.stops = slider.stops;
+              renderer.visualVariables = [ colorVariable ];
+              layer.renderer = renderer;
+
+              // update the color of each histogram bar based on the
+              // values of the slider thumbs
+              bars.forEach((bar, index) => {
+                const bin = slider.histogramConfig.bins[index];
+                const midValue = (bin.maxValue - bin.minValue) / 2 + bin.minValue;
+                const color = getColorFromValue(slider.stops, midValue);
+                bar.setAttribute("fill", color.toHex());
+              });
+            });
+
+          })
+          .catch((error) => {
+            console.log("there was an error: ", error);
+          });
+
+
+        // infers the color for a given value
+        // based on the stops from a ColorVariable
+        function getColorFromValue(stops, value) {
+          let minStop = stops[0];
+          let maxStop = stops[stops.length - 1];
+
+          const minStopValue = minStop.value;
+          const maxStopValue = maxStop.value;
+
+          if (value < minStopValue) {
+            return minStop.color;
+          }
+
+          if (value > maxStopValue) {
+            return maxStop.color;
+          }
+
+          const exactMatches = stops.filter((stop) => {
+            return stop.value === value;
+          });
+
+          if (exactMatches.length > 0) {
+            return exactMatches[0].color;
+          }
+
+          minStop = null;
+          maxStop = null;
+          stops.forEach((stop, i) => {
+            if (!minStop && !maxStop && stop.value >= value) {
+              minStop = stops[i - 1];
+              maxStop = stop;
+            }
+          });
+
+          const weightedPosition = (value - minStop.value) / (maxStop.value - minStop.value);
+
+          return Color.blendColors(minStop.color, maxStop.color, weightedPosition);
+        }
+      })());
+    </script>
+  </head>
+
+  <body>
+    <div id="viewDiv"></div>
+    <div id="containerDiv" class="esri-widget">
+      <div id="title"><h3>Mean Suitability<br> of Chestnut Tree Species </h3></div>
+      <div id="description">
+        This app allows you to explore Suitability Index data per county in Wisconsin.
+        The slider allows you to change the color breakpoints.
+      </div>
+      <div id="slider"></div>
+    </div>
+  </body>
+</html>
